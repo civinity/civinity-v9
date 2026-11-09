@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: civinity-v9-clean
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DISPATCH_ADMIN_EMAIL
+        sync: false
+      - key: DISPATCH_ADMIN_PASSWORD
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
