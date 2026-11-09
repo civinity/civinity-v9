@@ -23,3 +23,7 @@
 @media(max-width:1450px){.v94-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.v94-dashboard-grid{grid-template-columns:minmax(0,1fr) 280px}.v94-actions{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:1100px){.v94-dashboard-grid{grid-template-columns:1fr}.v94-right{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.v94-right .v94-status{grid-column:span 2}.v94-company-title{display:none}}
 @media(max-width:700px){.v94-banner{padding:20px;min-height:85px}.v94-banner h1{font-size:28px}.v94-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.v94-kpi strong{font-size:18px}.v94-actions{grid-template-columns:repeat(3,minmax(0,1fr))}.v94-right{display:flex}.v94-bottom{grid-template-columns:repeat(2,minmax(0,1fr))}.v94-section-title{flex-wrap:wrap}.v94-mini-tabs{order:3;width:100%}}
+
+/* V9.5: unified task table headers */
+.v94-taskpanel .c93-table thead th{background:linear-gradient(180deg,#1b487b,#102d55)!important;color:#fff!important;font-weight:750}
+.history-entry{border-bottom:1px solid #e1e9f3;padding:12px 0;font-size:13px;overflow-wrap:anywhere}.history-entry p{white-space:pre-wrap;color:#475569}.task-files{margin-top:18px;border-top:1px solid #e2e9f2;padding-top:14px}.task-files .btn{margin:4px}.v94-banner h1{font-size:36px}

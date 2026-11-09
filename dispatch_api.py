@@ -58,6 +58,12 @@ class Equipment(Base):
 class RepairPlan(Base):
  __tablename__='d_repair_plans'
  id=Column(Integer,primary_key=True); object_id=Column(Integer,ForeignKey('d_objects.id'),nullable=False,index=True); title=Column(String(240),nullable=False); estimated=Column(Numeric(12,2),default=0); priority=Column(String(24),default='videja'); state=Column(String(24),default='planots'); target_year=Column(Integer); created=Column(DateTime(timezone=True),default=NOW)
+class Company(Base):
+ __tablename__='d_companies'
+ id=Column(Integer,primary_key=True); name=Column(String(160),unique=True,nullable=False); registration=Column(String(80),default=''); address=Column(String(300),default=''); vat=Column(String(80),default='')
+class RepairSchedule(Base):
+ __tablename__='d_repair_schedule'
+ id=Column(Integer,primary_key=True); object_id=Column(Integer,ForeignKey('d_objects.id'),nullable=False,index=True); title=Column(String(240),nullable=False); due=Column(DateTime(timezone=True),nullable=False); state=Column(String(32),default='planots'); description=Column(Text,default=''); created_by=Column(Integer,ForeignKey('d_users.id')); created=Column(DateTime(timezone=True),default=NOW)
 class ClientAccess(Base):
  __tablename__='d_client_access'
  id=Column(Integer,primary_key=True); user_id=Column(Integer,ForeignKey('d_users.id'),nullable=False,index=True); object_id=Column(Integer,ForeignKey('d_objects.id'),nullable=False,index=True)
@@ -73,6 +79,15 @@ class Material(Base):
 class Photo(Base):
  __tablename__='d_photos'
  id=Column(Integer,primary_key=True); task_id=Column(Integer,ForeignKey('d_tasks.id')); mime=Column(String(30)); data=Column(LargeBinary); phase=Column(String(20),default='general'); created=Column(DateTime(timezone=True),default=NOW)
+class TaskAttachment(Base):
+ __tablename__='d_task_attachments'
+ id=Column(Integer,primary_key=True); task_id=Column(Integer,ForeignKey('d_tasks.id'),nullable=False,index=True); filename=Column(String(255),nullable=False); mime=Column(String(160),nullable=False); content=Column(LargeBinary,nullable=False); phase=Column(String(32),default='creation'); uploader=Column(Integer,ForeignKey('d_users.id')); created=Column(DateTime(timezone=True),default=NOW)
+class TaskAct(Base):
+ __tablename__='d_task_acts'
+ id=Column(Integer,primary_key=True); task_id=Column(Integer,ForeignKey('d_tasks.id'),nullable=False,index=True); company=Column(String(160)); body=Column(Text); creator=Column(Integer,ForeignKey('d_users.id')); created=Column(DateTime(timezone=True),default=NOW)
+class TaskChange(Base):
+ __tablename__='d_task_changes'
+ id=Column(Integer,primary_key=True); task_id=Column(Integer,ForeignKey('d_tasks.id'),nullable=False,index=True); actor=Column(Integer,ForeignKey('d_users.id')); action=Column(String(80)); details=Column(Text); at=Column(DateTime(timezone=True),default=NOW)
 class PN(Base):
  __tablename__='d_pn'
  id=Column(Integer,primary_key=True); object_id=Column(Integer,ForeignKey('d_objects.id')); year=Column(Integer); month=Column(Integer); status=Column(String(40),default='melnraksts'); created_by=Column(Integer,ForeignKey('d_users.id')); created=Column(DateTime(timezone=True),default=NOW); company_json=Column(Text,default='{}')
@@ -389,7 +404,7 @@ def task_create():
   g.db.add(TaskAssignment(task_id=t.id,user_id=uid))
   g.db.add(TaskNotification(task_id=t.id,user_id=uid))
  g.db.add(TicketDetails(task_id=t.id,data=json.dumps(valid_ticket_meta(p.get('ticket')),ensure_ascii=False)))
- audit('task_created',t.id);g.db.commit();return jsonify(task_dict(t)),201
+ g.db.add(TaskChange(task_id=t.id,actor=g.user.id,action='created',details='Uzdevums izveidots'));audit('task_created',t.id);g.db.commit();return jsonify(task_dict(t)),201
 @bp.patch('/tasks/<int:tid>')
 @auth
 def task_edit(tid):
@@ -408,6 +423,9 @@ def task_edit(tid):
   t.status=new_status
   if new_status=='pabeigts':t.completed_at=NOW()
   elif t.completed_at:t.completed_at=None
+ if 'description' in p:
+  if not allowed('vaditajs','parvaldnieks'):return error('Nav tiesību mainīt aprakstu',403)
+  t.description=str(p['description'])[:12000]
  if 'completed' in p:t.completed=str(p['completed'])[:12000]
  if 'materials' in p:
   if not isinstance(p['materials'],list) or len(p['materials'])>100:return error('Materiālu saraksts neder')
@@ -425,7 +443,7 @@ def task_edit(tid):
  if p.get('submit'):
   if not t.completed.strip():return error('Aizpildiet paveikto darbu aprakstu')
   t.status='gaida_apstiprinajumu';t.completed_at=NOW()
- audit('task_updated',t.id,json.dumps({k:v for k,v in p.items() if k!='materials'},ensure_ascii=False));g.db.commit();return jsonify(task_dict(t))
+ g.db.add(TaskChange(task_id=t.id,actor=g.user.id,action='updated',details=json.dumps({k:v for k,v in p.items() if k!='materials'},ensure_ascii=False)[:8000]));audit('task_updated',t.id,json.dumps({k:v for k,v in p.items() if k!='materials'},ensure_ascii=False));g.db.commit();return jsonify(task_dict(t))
 def haversine(a,b,c,d):
  R=6371000;phi1,phi2=math.radians(a),math.radians(c);dp=math.radians(c-a);dl=math.radians(d-b);v=math.sin(dp/2)**2+math.cos(phi1)*math.cos(phi2)*math.sin(dl/2)**2;return 2*R*math.atan2(math.sqrt(v),math.sqrt(1-v))
 @bp.post('/tasks/<int:tid>/clock')
@@ -468,7 +486,7 @@ def photo_upload(tid):
   im=Image.open(io.BytesIO(data));im.verify()
   if im.format not in ('JPEG','PNG','WEBP'):raise ValueError()
  except Exception:return error('Atļauti tikai JPEG, PNG, WEBP attēli')
- g.db.add(Photo(task_id=tid,mime='image/'+im.format.lower(),data=data,phase=request.form.get('phase','general') if request.form.get('phase') in ('before','after') else 'general'));audit('photo_uploaded',tid);g.db.commit();return jsonify(ok=True)
+ g.db.add(Photo(task_id=tid,mime='image/'+im.format.lower(),data=data,phase=request.form.get('phase','general') if request.form.get('phase') in ('before','after') else 'general'));g.db.add(TaskChange(task_id=tid,actor=g.user.id,action='photo_uploaded',details='Foto'));audit('photo_uploaded',tid);g.db.commit();return jsonify(ok=True)
 @bp.get('/tasks/<int:tid>/photos')
 @auth
 def photo_list(tid):
@@ -492,7 +510,7 @@ def review(tid):
  p=request.get_json(silent=True) or {};decision=p.get('decision')
  if decision not in ('approve','return'):return error('Lēmums nav norādīts')
  t.status='apstiprinats' if decision=='approve' else 'atgriezts';t.approved_by=g.user.id if decision=='approve' else None;t.approved_at=NOW() if decision=='approve' else None
- audit('review_'+decision,tid,str(p.get('comment',''))[:1000]);g.db.commit();return jsonify(task_dict(t))
+ g.db.add(TaskChange(task_id=tid,actor=g.user.id,action='review_'+decision,details=str(p.get('comment',''))[:1000]));audit('review_'+decision,tid,str(p.get('comment',''))[:1000]);g.db.commit();return jsonify(task_dict(t))
 @bp.post('/ai-report')
 @auth
 def ai_report():
@@ -881,3 +899,134 @@ def v61_equipment_one(eid):
  x=g.db.get(Equipment,eid)
  if not x or not _object_read(x.object_id):return error('Nav piekļuves',403)
  return jsonify(id=x.id,object_id=x.object_id,title=x.title,model=x.model,serial=x.serial,location=x.location)
+
+
+# V9.5: secure task attachments, immutable history, saved completion acts, repair schedule.
+@bp.post('/tasks/<int:tid>/attachments')
+@auth
+def task_attachment_upload(tid):
+ t=g.db.get(Task,tid)
+ if not t or not task_access(t):return error('Nav piekļuves',403)
+ if t.pn_id or t.status=='apstiprinats':return error('Uzdevums jau ir apstiprināts',409)
+ f=request.files.get('file')
+ if not f or not f.filename:return error('Izvēlieties failu')
+ name=os.path.basename(f.filename.replace('\\','/'))[:255]
+ ext=os.path.splitext(name)[1].lower()
+ if ext not in {'.jpg','.jpeg','.png','.webp','.pdf','.doc','.docx','.xls','.xlsx','.txt','.csv','.odt','.ods'}:return error('Faila tips nav atļauts',400)
+ data=f.read(8*1024*1024+1)
+ if not data or len(data)>8*1024*1024:return error('Faila izmērs nedrīkst pārsniegt 8 MB',413)
+ import mimetypes
+ mime=mimetypes.guess_type(name)[0] or 'application/octet-stream'
+ phase=request.form.get('phase','creation')
+ if phase not in ('creation','completion','update'):phase='update'
+ a=TaskAttachment(task_id=tid,filename=name,mime=mime,content=data,phase=phase,uploader=g.user.id)
+ g.db.add(a);g.db.add(TaskChange(task_id=tid,actor=g.user.id,action='attachment_added',details=phase+': '+name));g.db.commit()
+ return jsonify(id=a.id,filename=name),201
+@bp.get('/tasks/<int:tid>/attachments')
+@auth
+def task_attachments(tid):
+ t=g.db.get(Task,tid)
+ if not t or not task_access(t):return error('Nav piekļuves',403)
+ return jsonify([dict(id=a.id,filename=a.filename,phase=a.phase,created=a.created.isoformat() if a.created else '',uploader=a.uploader) for a in g.db.query(TaskAttachment).filter_by(task_id=tid).order_by(TaskAttachment.id).all()])
+@bp.get('/tasks/<int:tid>/attachments/<int:aid>')
+@auth
+def task_attachment_get(tid,aid):
+ t=g.db.get(Task,tid);a=g.db.get(TaskAttachment,aid)
+ if not t or not task_access(t) or not a or a.task_id!=tid:return error('Nav piekļuves',403)
+ return send_file(io.BytesIO(a.content),mimetype=a.mime,as_attachment=True,download_name=a.filename)
+@bp.get('/tasks/<int:tid>/history')
+@auth
+def task_history(tid):
+ t=g.db.get(Task,tid)
+ if not t or not task_access(t):return error('Nav piekļuves',403)
+ rows=g.db.query(TaskChange,User).outerjoin(User,TaskChange.actor==User.id).filter(TaskChange.task_id==tid).order_by(TaskChange.id.desc()).limit(300).all()
+ return jsonify([dict(action=x.action,details=x.details,actor=u.name if u else 'Lietotājs',at=x.at.isoformat() if x.at else '') for x,u in rows])
+@bp.post('/tasks/<int:tid>/acts')
+@auth
+def task_act_create(tid):
+ t=g.db.get(Task,tid)
+ if not t or not task_access(t):return error('Nav piekļuves',403)
+ if t.status not in ('pabeigts','apstiprinats'):return error('Aktu var sagatavot tikai pabeigtam uzdevumam',409)
+ p=request.get_json(silent=True) or {};o=g.db.get(Object,t.object_id)
+ company=str(p.get('company') or o.company or 'CIVINITY')[:160]
+ if o.company and company!=o.company:return error('Aktam jāatbilst objekta uzņēmumam',400)
+ body=str(p.get('body') or t.completed or t.description or '')[:16000]
+ a=TaskAct(task_id=tid,company=company,body=body,creator=g.user.id);g.db.add(a);g.db.flush()
+ g.db.add(TaskChange(task_id=tid,actor=g.user.id,action='act_created',details='Akts #'+str(a.id)))
+ g.db.commit();return jsonify(id=a.id),201
+@bp.get('/tasks/<int:tid>/acts')
+@auth
+def task_acts(tid):
+ t=g.db.get(Task,tid)
+ if not t or not task_access(t):return error('Nav piekļuves',403)
+ return jsonify([dict(id=a.id,company=a.company,created=a.created.isoformat() if a.created else '') for a in g.db.query(TaskAct).filter_by(task_id=tid).order_by(TaskAct.id.desc()).all()])
+@bp.get('/tasks/<int:tid>/acts/<int:aid>/pdf')
+@auth
+def task_act_pdf(tid,aid):
+ t=g.db.get(Task,tid);a=g.db.get(TaskAct,aid)
+ if not t or not task_access(t) or not a or a.task_id!=tid:return error('Nav piekļuves',403)
+ o=g.db.get(Object,t.object_id);buf=io.BytesIO();doc=SimpleDocTemplate(buf,pagesize=A4,leftMargin=42,rightMargin=42,topMargin=42,bottomMargin=42)
+ styles=getSampleStyleSheet()
+ import os as _os
+ font='/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+ if _os.path.exists(font):
+  if 'CiviDejaVu' not in pdfmetrics.getRegisteredFontNames():pdfmetrics.registerFont(TTFont('CiviDejaVu',font))
+  for sty in styles.byName.values():sty.fontName='CiviDejaVu'
+ story=[Paragraph(escape(a.company),styles['Title']),Spacer(1,15),Paragraph('DARBU NODOŠANAS–PIEŅEMŠANAS AKTS',styles['Heading2']),Spacer(1,15)]
+ company_info=g.db.query(Company).filter_by(name=a.company).first()
+ if company_info:
+  for label,val in [('Reģistrācijas Nr.',company_info.registration),('Juridiskā adrese',company_info.address),('PVN Nr.',company_info.vat)]:
+   if val:story.append(Paragraph('<b>'+escape(label)+'</b> '+escape(val),styles['Normal']));story.append(Spacer(1,6))
+ for label,val in [('Akta Nr.',str(a.id)),('Uzdevuma Nr.',str(t.id)),('Objekts',(o.name or '')+' — '+o.address),('Datums',a.created.strftime('%d.%m.%Y') if a.created else ''),('Paveiktie darbi',a.body)]:
+  story.append(Paragraph('<b>'+escape(label)+'</b> '+escape(val).replace('\n','<br/>'),styles['Normal']));story.append(Spacer(1,10))
+ story.append(Spacer(1,40));story.append(Paragraph('Izpildītājs: ________________________       Pasūtītājs: ________________________',styles['Normal']))
+ doc.build(story);buf.seek(0)
+ return send_file(buf,mimetype='application/pdf',as_attachment=False,download_name=f'PN_akts_{tid}_{aid}.pdf')
+@bp.get('/repair-schedule')
+@auth
+def repair_schedule_list():
+ rows=g.db.query(RepairSchedule).order_by(RepairSchedule.due).limit(200).all()
+ return jsonify([dict(id=x.id,object_id=x.object_id,title=x.title,due=x.due.isoformat(),state=x.state,description=x.description,object=(g.db.get(Object,x.object_id).name or g.db.get(Object,x.object_id).address)) for x in rows if _object_read(x.object_id)])
+@bp.post('/repair-schedule')
+@auth
+def repair_schedule_create():
+ if not allowed('vaditajs','parvaldnieks'):return error('Nav tiesību',403)
+ p=request.get_json(silent=True) or {};oid=p.get('object_id')
+ if not _edit_object(oid):return error('Nav tiesību',403)
+ try:due=datetime.fromisoformat(str(p.get('due','')).replace('Z','+00:00'))
+ except (ValueError,TypeError):return error('Norādiet korektu izpildes datumu')
+ title=str(p.get('title','')).strip()[:240]
+ if not title:return error('Norādiet darba nosaukumu')
+ x=RepairSchedule(object_id=oid,title=title,due=due,state='planots',description=str(p.get('description',''))[:4000],created_by=g.user.id)
+ g.db.add(x);g.db.commit();return jsonify(id=x.id),201
+@bp.patch('/repair-schedule/<int:pid>')
+@auth
+def repair_schedule_edit(pid):
+ x=g.db.get(RepairSchedule,pid)
+ if not x or not _edit_object(x.object_id):return error('Nav tiesību',403)
+ p=request.get_json(silent=True) or {}
+ if p.get('state') not in ('planots','procesa','izpildits'):return error('Nederīgs statuss')
+ x.state=p['state'];g.db.commit();return jsonify(ok=True)
+
+@bp.get('/companies')
+@auth
+def company_list():
+ rows=g.db.query(Company).order_by(Company.name).all()
+ return jsonify([dict(id=x.id,name=x.name,registration=x.registration,address=x.address,vat=x.vat) for x in rows])
+@bp.post('/companies')
+@auth
+def company_add():
+ if g.user.role!='administrators':return error('Tikai administrators',403)
+ p=request.get_json(silent=True) or {};name=str(p.get('name','')).strip()[:160]
+ if not name:return error('Norādiet uzņēmuma nosaukumu')
+ if g.db.query(Company).filter_by(name=name).first():return error('Uzņēmums jau ir reģistrēts',409)
+ x=Company(name=name,registration=str(p.get('registration',''))[:80],address=str(p.get('address',''))[:300],vat=str(p.get('vat',''))[:80]);g.db.add(x);g.db.commit();return jsonify(id=x.id,name=x.name),201
+
+@bp.delete('/tasks/<int:tid>/attachments/<int:aid>')
+@auth
+def task_attachment_delete(tid,aid):
+ t=g.db.get(Task,tid);a=g.db.get(TaskAttachment,aid)
+ if not t or not a or a.task_id!=tid or not task_access(t):return error('Nav piekļuves',403)
+ if t.pn_id or t.status=='apstiprinats':return error('Apstiprināts uzdevums nav maināms',409)
+ if a.uploader!=g.user.id and not allowed('vaditajs','parvaldnieks'):return error('Nav tiesību dzēst pielikumu',403)
+ name=a.filename;g.db.delete(a);g.db.add(TaskChange(task_id=tid,actor=g.user.id,action='attachment_deleted',details=name));g.db.commit();return jsonify(ok=True)
